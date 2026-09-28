@@ -49,7 +49,8 @@ def render(ds: Datasets, f: Filters) -> None:
             card_title("account_balance", f"Carte territoriale — {basis['map_title']}", note)
             tmap.render(ds, f, key=f"sf_map_{f.density_basis}", value_col=basis["count_col"],
                         unit=basis["unit"], height=420, show_etab=basis["show_etab"],
-                        hover_fields=basis["hover"])
+                        hover_fields=basis["hover"], density_col=basis["density_col"],
+                        density_title=basis["kpi_dens"])
 
     with visual_col:
         with st.container(key="card_sf_cat"):

@@ -174,7 +174,9 @@ def commune_points(ds: Datasets, f: Filters, value_col: str = "n_points") -> pd.
     if df.empty:
         return df
     df = with_effective_counts(df, f)
-    df = apply_density(df, f)
+    # Hors plage de densité : la commune reste tracée (estompée) plutôt que supprimée, pour que
+    # l'effet du filtre soit visible sur la carte sans perdre le contexte territorial.
+    in_range = df["cle_commune"].isin(apply_density(df, f)["cle_commune"])
     scoped = apply_geo(df, f)
     if f.canton:
         cantons = ds.get("table_analytique_cantons_presence")
@@ -188,7 +190,7 @@ def commune_points(ds: Datasets, f: Filters, value_col: str = "n_points") -> pd.
            "pct_eloignes", "role", "niv_formel", "niv_mm", "IB", "mm_only", value_col]
     keep = [c for c in dict.fromkeys(keep) if c in df.columns]
     out = df[keep].rename(columns={"commune": "label", value_col: "valeur"}).copy()
-    out["dans_perimetre"] = out["cle_commune"].isin(scoped["cle_commune"])
+    out["dans_perimetre"] = out["cle_commune"].isin(scoped["cle_commune"]) & in_range
     return out.reset_index(drop=True)
 
 

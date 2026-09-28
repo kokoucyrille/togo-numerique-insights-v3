@@ -129,6 +129,22 @@ def _bounds_for(communes: pd.DataFrame, f: Filters) -> tuple[tuple[float, float,
     return _pad(*b, C.MAP_PAD_NATIONAL), "national", "Togo"
 
 
+_DENSITY_STOPS = ("#E3F4EC", "#5FCFA0", "#0E9F6E", "#02403A")
+
+
+def _density_color(value, lo: float, hi: float) -> str | None:
+    """Couleur (dégradé vert clair → foncé) d'une densité ; None si la valeur est absente."""
+    if value is None or pd.isna(value):
+        return None
+    t = min(max((float(value) - lo) / (hi - lo), 0.0), 1.0) if hi > lo else 0.0
+    pos = t * (len(_DENSITY_STOPS) - 1)
+    i = min(int(pos), len(_DENSITY_STOPS) - 2)
+    a, b = _DENSITY_STOPS[i], _DENSITY_STOPS[i + 1]
+    frac = pos - i
+    mix = [round(int(a[k:k + 2], 16) + (int(b[k:k + 2], 16) - int(a[k:k + 2], 16)) * frac) for k in (1, 3, 5)]
+    return "#{:02X}{:02X}{:02X}".format(*mix)
+
+
 def _commune_color(row: pd.Series, color_by: str | None, vmax: float, base_color: str) -> str:
     if color_by == "palier" and pd.notna(row.get("palier")):
         return C.PALIER_COLORS.get(row["palier"], base_color)
@@ -137,11 +153,24 @@ def _commune_color(row: pd.Series, color_by: str | None, vmax: float, base_color
 
 def build_figure(ds, f: Filters, *, value_col: str = "n_points", unit: str = "", value_format=_DEFAULT_FORMAT,
                  color_by: str | None = None, height: int = 480, show_etab: bool = False,
-                 hover_fields: tuple[str, ...] = ()) -> tuple[go.Figure, str, str]:
+                 hover_fields: tuple[str, ...] = (), density_col: str | None = None,
+                 density_title: str = "") -> tuple[go.Figure, str, str]:
     regions_df = m.region_values(ds, f, value_col)
     values = dict(zip(regions_df["label"], regions_df["valeur"])) if not regions_df.empty else {}
+    dens_vals: dict = {}
+    d_lo, d_hi = 0.0, 1.0
+    if density_col:
+        # Coloration par densité (pour 10 000 hab.) : régions et communes partagent une même
+        # échelle, bornée au 5e–95e centile des communes visibles pour rester lisible.
+        rd = m.region_values(ds, f, density_col)
+        dens_vals = dict(zip(rd["label"], rd["valeur"])) if not rd.empty else {}
     region_detail = m.region_hover_detail(ds, f) if hover_fields else pd.DataFrame()
     communes = m.commune_points(ds, f, value_col)
+    if density_col and density_col in communes.columns and communes[density_col].notna().any():
+        d_lo = float(communes[density_col].quantile(0.05))
+        d_hi = float(communes[density_col].quantile(0.95))
+        if d_hi <= d_lo:
+            d_lo, d_hi = float(communes[density_col].min()), float(communes[density_col].max())
     bounds, level, label = _bounds_for(communes, f)
     x0, x1, y0, y1 = bounds
 
@@ -160,6 +189,8 @@ def build_figure(ds, f: Filters, *, value_col: str = "n_points", unit: str = "",
         color = region_color(data_name, i) if (has or selected or not values) else C.COLORS["empty"]
         if f.region and not selected:
             color = C.COLORS["empty"]
+        elif density_col and has and (dc := _density_color(dens_vals.get(data_name), d_lo, d_hi)):
+            color = dc
         xs, ys = _polygon_xy(feature["geometry"])
         lons += [x for x in xs if x is not None]
         lats += [y for y in ys if y is not None]
@@ -190,6 +221,8 @@ def build_figure(ds, f: Filters, *, value_col: str = "n_points", unit: str = "",
         lat, lon = C.GEO_POINTS[name]
         selected = name in f.region
         color = region_color(name) if (selected or not f.region) else C.COLORS["empty"]
+        if density_col and (selected or not f.region) and (dc := _density_color(dens_vals.get(name), d_lo, d_hi)):
+            color = dc
         point_hover = f"<b>{name}</b><br>{value_format(value)} {unit}"
         if hover_fields and name in region_detail.index:
             extra_lines = _hover_lines(region_detail.loc[name], hover_fields)
@@ -213,7 +246,8 @@ def build_figure(ds, f: Filters, *, value_col: str = "n_points", unit: str = "",
             if subset.empty:
                 continue
             sizes = [7 + size_boost * 13 * math.sqrt(max(v, 0) / vmax) for v in subset["valeur"]]
-            colors = [_commune_color(r, color_by, vmax, base_color) for _, r in subset.iterrows()]
+            colors = [(_density_color(r.get(density_col), d_lo, d_hi) if density_col else None)
+                      or _commune_color(r, color_by, vmax, base_color) for _, r in subset.iterrows()]
             selected_mask = subset["label"].isin(f.commune)
             line_widths = [2.4 if sel else 0.8 for sel in selected_mask]
             line_colors = ["#0B1F33" if sel else "#FFFFFF" for sel in selected_mask]
@@ -246,6 +280,17 @@ def build_figure(ds, f: Filters, *, value_col: str = "n_points", unit: str = "",
                 marker=dict(size=8, color=colors, symbol="diamond", line=dict(color="#FFFFFF", width=1)),
                 text=hover, hoverinfo="text", customdata=[["etab", "-"]] * len(pts),
             ))
+
+    if density_col:
+        # Trace « fantôme » (aucun point) qui ne sert qu'à afficher la légende de l'échelle.
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers", showlegend=False, hoverinfo="skip",
+            marker=dict(color=[d_lo], cmin=d_lo, cmax=d_hi, showscale=True,
+                        colorscale=[[i / (len(_DENSITY_STOPS) - 1), c] for i, c in enumerate(_DENSITY_STOPS)],
+                        colorbar=dict(title=dict(text=density_title, side="right", font=dict(size=11)),
+                                      thickness=10, len=0.55, x=1.0, xanchor="right", y=0.3,
+                                      tickfont=dict(size=10), outlinewidth=0)),
+        ))
 
     fig.update_layout(
         height=height, margin=dict(l=0, r=0, t=0, b=0),
@@ -327,12 +372,14 @@ def _apply_map_selection(ds, key: str) -> None:
 def render(ds, f: Filters, *, key: str, value_col: str = "n_points", unit: str = "points",
           value_format=_DEFAULT_FORMAT, color_by: str | None = None, height: int = 480,
           show_etab: bool = False, caption: str | None = None,
-          hover_fields: tuple[str, ...] = ()) -> None:
+          hover_fields: tuple[str, ...] = (), density_col: str | None = None,
+          density_title: str = "") -> None:
     """Carte interactive : clic direct sur une région ou une commune, zoom automatique
     sur le territoire réellement sélectionné (filtres ou clic), synchronisée partout."""
     fig, level, _ = build_figure(ds, f, value_col=value_col, unit=unit, value_format=value_format,
                                  color_by=color_by, height=height, show_etab=show_etab,
-                                 hover_fields=hover_fields)
+                                 hover_fields=hover_fields, density_col=density_col,
+                                 density_title=density_title)
 
     top = st.columns([5, 1.2])
     with top[0]:
