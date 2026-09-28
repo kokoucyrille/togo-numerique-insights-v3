@@ -19,14 +19,15 @@ _CLASSE_COLORS = {"Correct": C.COLORS["green"], "Faible": C.OPERATEUR_COLORS["Mo
 
 def render(ds: Datasets, f: Filters) -> None:
     page_header("Accès aux services financiers", "Couverture territoriale des banques, IMF, assurances et mutuelles.")
+    basis = C.DENSITY_BASES[f.density_basis]
+    formel = f.density_basis == "formel"
     density_chip = []
     if f.density_range:
-        basis = C.DENSITY_BASES[f.density_basis]
         lo, hi = f.density_range
         density_chip = [f"{basis['slider_label']} {fmt_dec(lo, 2)}–{fmt_dec(hi, 2)} / 10 000 hab."]
     context_bar([
         ("Région", list(f.region)), ("Préfecture", list(f.prefecture)), ("Commune", list(f.commune)),
-        ("Type d'établissement", list(f.etab_categorie)), ("Opérateur Mobile Money", list(f.mm_operateur)),
+        ("Type d'établissement", list(f.etab_categorie)), ("Indicateur", [basis["label"]]),
         ("Densité", density_chip),
     ])
 
@@ -40,74 +41,87 @@ def render(ds: Datasets, f: Filters) -> None:
             note_bits = []
             if f.etab_categorie:
                 note_bits.append("Type : " + ", ".join(f.etab_categorie))
-            if f.mm_operateur:
-                note_bits.append("Opérateur MM : " + ", ".join(f.mm_operateur))
             if f.density_range:
                 lo, hi = f.density_range
                 note_bits.append(f"Densité {fmt_dec(lo, 2)}–{fmt_dec(hi, 2)}")
             note = " · ".join(note_bits) if note_bits else \
-                "Banques, IMF, assurances, mutuelles — cliquez une région ou une commune"
-            card_title("account_balance", "Carte territoriale — établissements financiers formels", note)
-            tmap.render(ds, f, key="sf_map", value_col="n_formel", unit="établissements", height=420,
-                      show_etab=True,
-                      hover_fields=("population", "formel_10k", "hab_par_formel", "part_formel_pct",
-                                    "n_mm", "mm_10k", "dist_med_km"))
+                ("Banques, IMF, assurances, mutuelles" if formel else basis["label"]) + " — cliquez une région ou une commune"
+            card_title("account_balance", f"Carte territoriale — {basis['map_title']}", note)
+            tmap.render(ds, f, key=f"sf_map_{f.density_basis}", value_col=basis["count_col"],
+                        unit=basis["unit"], height=420, show_etab=basis["show_etab"],
+                        hover_fields=basis["hover"])
 
     with visual_col:
         with st.container(key="card_sf_cat"):
-            card_title("category", "Répartition par catégorie, par région", "Banque · Micro-Finance · Assurance · Mutuelle")
-            table = M.formel_category_by_region(ds, f)
+            if f.density_basis == "mm":
+                card_title("compare_arrows", "Répartition par opérateur, par région", "Moov, Togocom, duo ou non spécifié")
+                table = M.mm_operator_by_region(ds, f)
+                colors = {c: C.OPERATEUR_COLORS.get(c, C.OTHER_COLOR) for c in table.columns}
+            elif f.density_basis == "points":
+                card_title("category", "Répartition des points d'accès, par région",
+                           "Banque · Micro-Finance · Assurance · Mutuelle · Agents MM")
+                table = M.points_by_region(ds, f)
+                colors = {c: C.ETAB_CATEGORY_COLORS.get(c, C.COLORS["yellow"]) for c in table.columns}
+            else:
+                card_title("category", "Répartition par catégorie, par région", "Banque · Micro-Finance · Assurance · Mutuelle")
+                table = M.formel_category_by_region(ds, f)
+                colors = {c: C.ETAB_CATEGORY_COLORS[c] for c in table.columns}
+            table = M.restrict_regions_by_density(ds, f, table)
             if table.empty:
                 empty_state(300)
             else:
-                colors = {c: C.ETAB_CATEGORY_COLORS[c] for c in table.columns}
                 plot(ch.grouped_hbars(table, colors, height=360, stack=True), "sf_cat")
 
     with st.container(key="card_sf_ratio"):
-        card_title("insights", "Accessibilité réelle", "Habitants par établissement — plus la barre est longue, moins le territoire est desservi")
+        card_title("insights", "Accessibilité réelle",
+                   f"{basis['kpi_hab']} — plus la barre est longue, moins le territoire est desservi")
         col_pref, col_reg = st.columns(2, gap="medium")
         with col_pref:
             st.caption("Par préfecture")
-            table = M.formel_ratio_table(ds, f, "prefecture").dropna(subset=["hab_par_formel"]) \
-                .sort_values("hab_par_formel", ascending=False).head(15).reset_index(drop=True)
+            table = M.basis_ratio_table(ds, f, "prefecture").dropna(subset=["hab"]) \
+                .sort_values("hab", ascending=False).head(15).reset_index(drop=True)
             if table.empty:
                 empty_state(340)
             else:
-                bar = table.rename(columns={"prefecture": "label", "hab_par_formel": "valeur"})[["label", "valeur"]]
-                colors = [_CLASSE_COLORS.get(c, C.COLORS["muted"]) for c in table["classe"]]
+                bar = table.rename(columns={"prefecture": "label", "hab": "valeur"})[["label", "valeur"]]
+                colors = [_CLASSE_COLORS.get(c, C.COLORS["muted"]) for c in table["classe"]] if formel \
+                    else [C.COLORS["part"]] * len(bar)
                 plot(ch.top_bars(bar, height=max(200, 24 * len(bar)), colors=colors, value_format=fmt_int,
                                  hover_extra=_ratio_hover(table, "prefecture")), "sf_ratio_pref")
-                st.markdown(_legend_html(), unsafe_allow_html=True)
+                if formel:
+                    st.markdown(_legend_html(), unsafe_allow_html=True)
         with col_reg:
             st.caption("Par région")
-            table = M.formel_ratio_table(ds, f, "region").dropna(subset=["hab_par_formel"]) \
-                .sort_values("hab_par_formel", ascending=False).head(20).reset_index(drop=True)
+            table = M.basis_ratio_table(ds, f, "region").dropna(subset=["hab"]) \
+                .sort_values("hab", ascending=False).head(20).reset_index(drop=True)
             if table.empty:
                 empty_state(340)
             else:
-                bar = table.rename(columns={"region_a": "label", "hab_par_formel": "valeur"})[["label", "valeur"]]
+                bar = table.rename(columns={"region_a": "label", "hab": "valeur"})[["label", "valeur"]]
                 colors = [ch.region_color(l) for l in bar["label"]]
                 plot(ch.radial_bars(bar, height=380, colors=colors, value_format=fmt_int,
                                     hover_extra=_ratio_hover(table, "region")), "sf_ratio_region")
 
     with st.container(key="card_sf_faible"):
-        card_title("warning", "Territoires à plus faible présence formelle",
-                   "Rayon = habitants par établissement · plus long = moins bien desservi")
+        card_title("warning", "Territoires les moins bien desservis" if not formel else "Territoires à plus faible présence formelle",
+                   f"Rayon = {basis['kpi_hab'].lower()} · plus long = moins bien desservi")
         bar = M.weakest_prefectures(ds, f)
         if bar.empty:
             empty_state(300)
         else:
-            chart_df = bar.rename(columns={"prefecture": "label", "hab_par_formel": "valeur"})[["label", "valeur", "classe"]]
-            chart_df = chart_df.dropna(subset=["valeur"])
+            chart_df = bar.rename(columns={"prefecture": "label", "hab": "valeur"})
+            chart_df = chart_df.assign(classe=chart_df["classe"] if formel else None).dropna(subset=["valeur"])
             if chart_df.empty:
                 empty_state(300)
             else:
-                colors = [_CLASSE_COLORS.get(c, C.COLORS["muted"]) for c in chart_df["classe"]]
+                colors = [_CLASSE_COLORS.get(c, C.COLORS["muted"]) for c in chart_df["classe"]] if formel \
+                    else [C.COLORS["part"]] * len(chart_df)
                 plot(ch.radial_bars(chart_df[["label", "valeur"]], height=420, colors=colors,
                                     value_format=fmt_int,
-                                    hover_extra=_ratio_hover(bar.dropna(subset=["hab_par_formel"]), "prefecture")),
+                                    hover_extra=_ratio_hover(bar.dropna(subset=["hab"]), "prefecture")),
                      "sf_faible")
-                st.markdown(_legend_html(), unsafe_allow_html=True)
+                if formel:
+                    st.markdown(_legend_html(), unsafe_allow_html=True)
 
     source_note(C.SOURCE_NOTE)
 
@@ -130,10 +144,10 @@ def _ratio_hover(table: pd.DataFrame, level: str) -> list[str]:
         parts = []
         if pd.notna(row.get("population")):
             parts.append(f"Population : {fmt_int(row['population'])}")
-        if pd.notna(row.get("n_formel")):
-            parts.append(f"Établissements : {fmt_int(row['n_formel'])}")
-        if pd.notna(row.get("formel_10k")):
-            parts.append(f"Étab. / 10 000 hab. : {fmt_dec(row['formel_10k'], 2)}")
+        if pd.notna(row.get("n")):
+            parts.append(f"Effectif : {fmt_int(row['n'])}")
+        if pd.notna(row.get("d10k")):
+            parts.append(f"Pour 10 000 hab. : {fmt_dec(row['d10k'], 2)}")
         if level == "prefecture" and pd.notna(row.get("classe")):
             parts.append(f"Classe : {row['classe']}")
         lines.append("<br>".join(parts))

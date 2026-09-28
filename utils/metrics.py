@@ -417,25 +417,27 @@ def formel_ratio_bar(ds: Datasets, f: Filters, level: str = "prefecture", n: int
 
 def financial_kpis(ds: Datasets, f: Filters) -> list:
     from components.kpi import Kpi
+    basis = C.DENSITY_BASES[f.density_basis]
     df = with_effective_counts(apply_geo(ds.get("table_analytique_prefectures"), f), f)
     df = apply_density(df, f)
     if df.empty:
         return []
-    pop, n_formel = float(df["population"].sum()), float(df["n_formel"].sum())
-    hab_par_formel = pop / n_formel if n_formel else None
-    formel_10k = n_formel / pop * 10_000 if pop else None
-    sous_dotees = int((df["classe"] != "Correct").sum()) if not f.etab_categorie else None
+    pop, n = float(df["population"].sum()), float(df[basis["count_col"]].sum())
+    hab = pop / n if n else None
+    dens = n / pop * 10_000 if pop else None
+    sous_dotees = int((df["classe"] != "Correct").sum()) \
+        if f.density_basis == "formel" and not f.etab_categorie else None
     kpis = [
-        Kpi("n_formel", "Établissements financiers", "account_balance", "green", n_formel, "int",
-           definition="Banques, IMF, assurances, mutuelles — dans le périmètre sélectionné."),
-        Kpi("hab_formel", "Habitants par établissement", "groups", "blue", hab_par_formel, "int",
-           definition="Population ÷ nombre d'établissements formels (plus faible = mieux desservi)."),
-        Kpi("formel10k", "Établissements pour 10 000 hab.", "grid_view", "yellow", formel_10k, "dec",
-           definition="Densité relative à la population."),
+        Kpi(basis["count_col"], basis["kpi_count"], "account_balance", "green", n, "int",
+            definition=f"{basis['label']} — dans le périmètre sélectionné."),
+        Kpi("hab_basis", basis["kpi_hab"], "groups", "blue", hab, "int",
+            definition="Population ÷ effectif de l'indicateur choisi (plus faible = mieux desservi)."),
+        Kpi("dens_basis", basis["kpi_dens"], "grid_view", "yellow", dens, "dec",
+            definition="Densité relative à la population."),
     ]
     if sous_dotees is not None:
         kpis.append(Kpi("faible", "Préfectures sous-dotées", "warning", "red", sous_dotees, "int",
-                       delta_label=f"sur {len(df)}", definition="Préfectures classées « Faible » ou « MM-only »."))
+                        delta_label=f"sur {len(df)}", definition="Préfectures classées « Faible » ou « MM-only »."))
     return kpis
 
 
@@ -443,15 +445,51 @@ _CLASSE_SEVERITY = {"MM-only": 0, "Faible": 1, "Correct": 2}
 
 
 def weakest_prefectures(ds: Datasets, f: Filters, n: int = 10) -> pd.DataFrame:
+    """Préfectures les moins bien desservies selon l'indicateur choisi (colonnes : n, hab, d10k ;
+    `classe` uniquement pour l'indicateur « Établissements formels »)."""
+    basis = C.DENSITY_BASES[f.density_basis]
     df = with_effective_counts(apply_geo(ds.get("table_analytique_prefectures"), f), f)
     df = apply_density(df, f)
     if df.empty:
         return df
-    cols = ["prefecture", REGION_COL, "population", "n_formel", "hab_par_formel", "classe"]
-    out = df[cols].copy()
-    out["_sev"] = out["classe"].map(_CLASSE_SEVERITY).fillna(9)
-    out = out.sort_values(["_sev", "hab_par_formel"], ascending=[True, False], na_position="first")
-    return out.drop(columns="_sev").head(n).reset_index(drop=True)
+    formel = f.density_basis == "formel"
+    cols = ["prefecture", REGION_COL, "population", basis["count_col"], basis["hab_col"], basis["density_col"]]
+    out = df[cols + (["classe"] if formel else [])].rename(
+        columns={basis["count_col"]: "n", basis["hab_col"]: "hab", basis["density_col"]: "d10k"})
+    if formel:
+        out["_sev"] = out["classe"].map(_CLASSE_SEVERITY).fillna(9)
+        out = out.sort_values(["_sev", "hab"], ascending=[True, False], na_position="first").drop(columns="_sev")
+    else:
+        out = out.sort_values("hab", ascending=False, na_position="first")
+    return out.head(n).reset_index(drop=True)
+
+
+def basis_ratio_table(ds: Datasets, f: Filters, level: str = "prefecture") -> pd.DataFrame:
+    """Table (population, n, hab, d10k[, classe]) selon l'indicateur de densité choisi."""
+    basis = C.DENSITY_BASES[f.density_basis]
+    extra = ["classe"] if level == "prefecture" and f.density_basis == "formel" else []
+    table = _ratio_table(ds, f, level, [basis["count_col"], basis["hab_col"], basis["density_col"]] + extra,
+                         basis["hab_col"])
+    return table.rename(columns={basis["count_col"]: "n", basis["hab_col"]: "hab", basis["density_col"]: "d10k"})
+
+
+def restrict_regions_by_density(ds: Datasets, f: Filters, table: pd.DataFrame) -> pd.DataFrame:
+    """Pour les tables indexées par région (répartitions) : ne garde que les régions dont la
+    densité, pour l'indicateur choisi, est dans la plage du filtre. Sans plage active : inchangé."""
+    if f.density_range is None or table.empty:
+        return table
+    kept = apply_density(with_effective_counts(ds.get("table_analytique_regions"), f), f)[REGION_COL]
+    return table[table.index.isin(kept)]
+
+
+def points_by_region(ds: Datasets, f: Filters) -> pd.DataFrame:
+    """Répartition des points d'accès par région : catégories d'établissements formels + agents MM."""
+    table = formel_category_by_region(ds, f)
+    agents = ds.get("agents_mm_operateur_region")
+    if table.empty or agents.empty:
+        return table
+    agents = agents[agents["region_analyse"] != "Togo"].set_index("region_analyse")["Total"]
+    return table.assign(**{"Agents Mobile Money": agents.reindex(table.index)})
 
 
 # --------------------------------------------------------------------------- #

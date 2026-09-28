@@ -133,7 +133,7 @@ def apply_density(df: pd.DataFrame, f: Filters) -> pd.DataFrame:
     """Restreint aux territoires dont la densité (pour 10 000 hab.) est dans la plage choisie.
 
     À appeler APRÈS with_effective_counts() : la colonne de densité (formel_10k / mm_10k / pts_10k)
-    reflète alors déjà les filtres « type d'établissement » et « opérateur Mobile Money ».
+    reflète alors déjà le filtre « type d'établissement » (et « opérateur Mobile Money » ailleurs).
     Chaque échelon (région, préfecture, commune) est jugé sur sa propre densité ; une valeur
     absente (NaN) est exclue dès que le filtre est actif. Sans plage active, `df` est renvoyé tel quel.
     """
@@ -324,17 +324,15 @@ def render_sidebar(ds: Datasets, page: str) -> Filters:
 
         if page in finance_pages:
             st.markdown('<div class="sb-section">Finance</div>', unsafe_allow_html=True)
-            # Filtres indépendants, affichés directement (aucun sous-menu repliable). La page
-            # Services financiers propose désormais aussi l'opérateur Mobile Money (agents) en
-            # complément du type d'établissement, pour croiser les deux réseaux d'accès sur la
-            # même page ; Mobile Money reste le seul endroit qui n'a pas besoin du type
-            # d'établissement (établissements formels absents de cette page).
+            # Filtres indépendants, affichés directement (aucun sous-menu repliable). Le type
+            # d'établissement concerne Vue d'ensemble et Services financiers ; l'opérateur
+            # Mobile Money n'est proposé que sur Vue d'ensemble et Mobile Money.
             if page in {"vue_ensemble", "services_financiers"}:
                 categories = ds.etab_categories
                 chosen["etab_categorie"] = _multi(F_ETAB, "Type d'établissement", categories,
                                                   C.ALL_LABELS["etab_categorie"], icon="category",
                                                   disabled=not categories)
-            if page in {"vue_ensemble", "mobile_money", "services_financiers"}:
+            if page in {"vue_ensemble", "mobile_money"}:
                 operateurs = ds.mm_operateurs
                 chosen["mm_operateur"] = _multi(F_MM, "Opérateur Mobile Money", operateurs,
                                                 C.ALL_LABELS["mm_operateur"], icon="sim_card",

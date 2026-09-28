@@ -105,17 +105,27 @@ ETAB_CATEGORY_COLS = {
 # déjà présente dans les tables analytiques (pour 10 000 hab.), colonne de comptage associée
 # (celle que la carte affiche) et pas du curseur. Aucun ratio n'est inventé : ce sont les
 # colonnes formel_10k / mm_10k / pts_10k, recalculées à l'identique par with_effective_counts()
-# lorsque les filtres « type d'établissement » / « opérateur Mobile Money » sont actifs.
+# lorsque le filtre « type d'établissement » est actif. L'indicateur choisi pilote toute la page
+# Services financiers (carte, KPI, classements, répartition).
 DENSITY_BASES = {
     "formel": {"label": "Établissements formels", "density_col": "formel_10k", "count_col": "n_formel",
                "unit": "établissements", "short": "établissements", "slider_label": "Établissements",
-               "step": 0.1, "map_title": "établissements financiers formels"},
+               "step": 0.1, "map_title": "établissements financiers formels", "hab_col": "hab_par_formel",
+               "kpi_count": "Établissements financiers", "kpi_hab": "Habitants par établissement",
+               "kpi_dens": "Établissements pour 10 000 hab.", "show_etab": True,
+               "hover": ("population", "formel_10k", "hab_par_formel", "part_formel_pct", "n_mm", "mm_10k", "dist_med_km")},
     "mm": {"label": "Agents Mobile Money", "density_col": "mm_10k", "count_col": "n_mm",
            "unit": "agents", "short": "agents MM", "slider_label": "Agents Mobile Money",
-           "step": 1.0, "map_title": "agents Mobile Money"},
+           "step": 1.0, "map_title": "agents Mobile Money", "hab_col": "hab_par_mm",
+           "kpi_count": "Agents Mobile Money", "kpi_hab": "Habitants par agent MM",
+           "kpi_dens": "Agents MM pour 10 000 hab.", "show_etab": False,
+           "hover": ("population", "mm_10k", "hab_par_mm", "n_formel", "formel_10k", "dist_med_km")},
     "points": {"label": "Établissements + agents MM", "density_col": "pts_10k", "count_col": "n_points",
                "unit": "points d'accès", "short": "points d'accès", "slider_label": "Points d'accès",
-               "step": 1.0, "map_title": "points d'accès financiers"},
+               "step": 1.0, "map_title": "points d'accès financiers", "hab_col": "hab_par_point",
+               "kpi_count": "Points d'accès financiers", "kpi_hab": "Habitants par point d'accès",
+               "kpi_dens": "Points d'accès pour 10 000 hab.", "show_etab": True,
+               "hover": ("population", "pts_10k", "n_points", "n_formel", "n_mm", "dist_med_km")},
 }
 DEFAULT_DENSITY_BASIS = "formel"
 
