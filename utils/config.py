@@ -103,27 +103,30 @@ ETAB_CATEGORY_COLS = {
 
 # Filtre « densité » (page Services financiers) : base de calcul -> libellés, colonne de densité
 # déjà présente dans les tables analytiques (pour 10 000 hab.), colonne de comptage associée
-# (celle que la carte affiche) et bornes des 5 niveaux de densité sélectionnables (« edges » :
-# 4 seuils => niveau 1 = sous le 1er seuil … niveau 5 = au-dessus du dernier ; à ajuster ici). Aucun ratio n'est inventé : ce sont les
+# (celle que la carte affiche) et classes d'effectif sélectionnables (« effectifs » : bornes incluses,
+# None = sans limite haute ; à ajuster ici). Aucun ratio n'est inventé : ce sont les
 # colonnes formel_10k / mm_10k / pts_10k, recalculées à l'identique par with_effective_counts()
 # lorsque le filtre « type d'établissement » est actif. L'indicateur choisi pilote toute la page
 # Services financiers (carte, KPI, classements, répartition).
 DENSITY_BASES = {
     "formel": {"label": "Établissements formels", "density_col": "formel_10k", "count_col": "n_formel",
                "unit": "établissements", "short": "établissements",
-               "edges": (0.25, 0.5, 1.0, 2.0), "map_title": "établissements financiers formels", "hab_col": "hab_par_formel",
+               "effectifs": ((1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 10), (11, 20), (21, None)),
+               "effectif_title": "Effectif d'établissements", "map_title": "établissements financiers formels", "hab_col": "hab_par_formel",
                "kpi_count": "Établissements financiers", "kpi_hab": "Habitants par établissement",
                "kpi_dens": "Établissements pour 10 000 hab.", "show_etab": True,
                "hover": ("population", "formel_10k", "hab_par_formel", "part_formel_pct", "n_mm", "mm_10k", "dist_med_km")},
     "mm": {"label": "Agents Mobile Money", "density_col": "mm_10k", "count_col": "n_mm",
            "unit": "agents", "short": "agents MM",
-           "edges": (5.0, 10.0, 20.0, 40.0), "map_title": "agents Mobile Money", "hab_col": "hab_par_mm",
+           "effectifs": ((0, 24), (25, 49), (50, 99), (100, 199), (200, 499), (500, None)),
+           "effectif_title": "Effectif d'agents MM", "map_title": "agents Mobile Money", "hab_col": "hab_par_mm",
            "kpi_count": "Agents Mobile Money", "kpi_hab": "Habitants par agent MM",
            "kpi_dens": "Agents MM pour 10 000 hab.", "show_etab": False,
            "hover": ("population", "mm_10k", "hab_par_mm", "n_formel", "formel_10k", "dist_med_km")},
     "points": {"label": "Établissements + agents MM", "density_col": "pts_10k", "count_col": "n_points",
                "unit": "points d'accès", "short": "points d'accès",
-               "edges": (5.0, 10.0, 20.0, 40.0), "map_title": "points d'accès financiers", "hab_col": "hab_par_point",
+               "effectifs": ((0, 24), (25, 49), (50, 99), (100, 199), (200, 499), (500, None)),
+               "effectif_title": "Effectif de points d'accès", "map_title": "points d'accès financiers", "hab_col": "hab_par_point",
                "kpi_count": "Points d'accès financiers", "kpi_hab": "Habitants par point d'accès",
                "kpi_dens": "Points d'accès pour 10 000 hab.", "show_etab": True,
                "hover": ("population", "pts_10k", "n_points", "n_formel", "n_mm", "dist_med_km")},

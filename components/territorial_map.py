@@ -185,7 +185,7 @@ def build_figure(ds, f: Filters, *, value_col: str = "n_points", unit: str = "",
         data_name = C.REGION_GEO_ALIAS.get(props["region"], props["region"])
         poly_names.add(data_name)
         has = data_name in values
-        if (f.density_active or hide_empty) and not has:
+        if (f.effectif_active or hide_empty) and not has:
             continue  # région hors niveaux de densité, ou sans aucun élément : non tracée
         selected = data_name in f.region
         color = region_color(data_name, i) if (has or selected or not values) else C.COLORS["empty"]

@@ -12,7 +12,7 @@ from utils import config as C
 from utils import metrics as M
 from utils.data_loader import Datasets
 from utils.filters import Filters
-from utils.filters import density_chip as density_chip_labels
+from utils.filters import effectif_chip as effectif_chip_labels
 from utils.formatting import fmt_dec, fmt_int
 
 _CLASSE_COLORS = {"Correct": C.COLORS["green"], "Faible": C.OPERATEUR_COLORS["Moov"], "MM-only": C.COLORS["red"]}
@@ -22,11 +22,11 @@ def render(ds: Datasets, f: Filters) -> None:
     page_header("Accès aux services financiers", "Couverture territoriale des banques, IMF, assurances et mutuelles.")
     basis = C.DENSITY_BASES[f.density_basis]
     formel = f.density_basis == "formel"
-    density_chip = density_chip_labels(f)
+    effectif_chip = effectif_chip_labels(f)
     context_bar([
         ("Région", list(f.region)), ("Préfecture", list(f.prefecture)), ("Commune", list(f.commune)),
         ("Type d'établissement", list(f.etab_categorie)), ("Indicateur", [basis["label"]]),
-        ("Densité", density_chip),
+        ("Effectif", effectif_chip),
     ])
 
     kpis = M.financial_kpis(ds, f)
@@ -39,9 +39,8 @@ def render(ds: Datasets, f: Filters) -> None:
             note_bits = []
             if f.etab_categorie:
                 note_bits.append("Type : " + ", ".join(f.etab_categorie))
-            if f.density_active:
-                note_bits.append("Densité : niveau" + ("x " if len(f.density_levels) > 1 else " ")
-                                 + ", ".join(map(str, f.density_levels)))
+            if f.effectif_active:
+                note_bits.append("Effectif : " + ", ".join(effectif_chip_labels(f)))
             note = " · ".join(note_bits) if note_bits else \
                 ("Banques, IMF, assurances, mutuelles" if formel else basis["label"]) + " — cliquez une région ou une commune"
             card_title("account_balance", f"Carte territoriale — {basis['map_title']}", note)
@@ -65,7 +64,7 @@ def render(ds: Datasets, f: Filters) -> None:
                 card_title("category", "Répartition par catégorie, par région", "Banque · Micro-Finance · Assurance · Mutuelle")
                 table = M.formel_category_by_region(ds, f)
                 colors = {c: C.ETAB_CATEGORY_COLORS[c] for c in table.columns}
-            table = M.restrict_regions_by_density(ds, f, table)
+            table = M.restrict_regions_by_effectif(ds, f, table)
             if table.empty:
                 empty_state(300)
             else:

@@ -10,7 +10,7 @@ import pandas as pd
 from . import config as C
 from .data_loader import Datasets
 from .filters import (
-    Filters, apply_axe, apply_canton, apply_density, apply_etab_categorie, apply_geo, apply_palier,
+    Filters, apply_axe, apply_canton, apply_effectif, apply_etab_categorie, apply_geo, apply_palier,
     apply_years, with_effective_counts,
 )
 
@@ -147,12 +147,39 @@ def accessibility_details(ds: Datasets, f: Filters) -> pd.DataFrame:
 # --------------------------------------------------------------------------- #
 # Carte territoriale interactive (components/territorial_map.py)
 # --------------------------------------------------------------------------- #
+_ROLL_COLS = ("population", "n_formel", "n_mm", "n_points", "n_banque", "n_mf", "n_assurance", "n_mutuelle",
+              "n_mm_deux_op", "n_mm_togocom", "n_mm_moov", "n_mm_nsp")
+_SHARE_COLS = ("part_pop_pct", "part_formel_pct", "part_mm_pct", "ratio_repr_formel", "ratio_repr_mm")
+
+
+def level_table(ds: Datasets, f: Filters, level: str, geo: bool = False) -> pd.DataFrame:
+    """Table d'un échelon (region | prefecture | commune) selon les filtres finance et le filtre
+    d'effectif. Le filtre d'effectif s'applique aux COMMUNES (les localités de la carte) ; les
+    préfectures et régions sont alors recalculées en cumulant uniquement les communes retenues
+    (population et effectifs sommés, ratios recalculés) et ne subsistent que si elles en contiennent."""
+    df = ds.get(_LEVEL_TABLE[level])
+    if geo:
+        df = apply_geo(df, f)
+    if not f.effectif_active or level == "commune":
+        return apply_effectif(with_effective_counts(df, f), f)
+    communes = apply_effectif(with_effective_counts(ds.get("table_analytique_communes"), f), f)
+    key = _LEVEL_LABEL[level]
+    if df.empty or communes.empty or key not in communes.columns:
+        return df.iloc[0:0]
+    cols = [c for c in _ROLL_COLS if c in communes.columns and c in df.columns]
+    rolled = communes.groupby(key, as_index=False)[cols].sum()
+    out = df.drop(columns=cols).merge(rolled, on=key, how="inner")
+    for c in _SHARE_COLS:  # parts nationales d'origine : non pertinentes sur un sous-ensemble de communes
+        if c in out.columns:
+            out[c] = float("nan")
+    return with_effective_counts(out, f, force=True)
+
+
 def region_values(ds: Datasets, f: Filters, value_col: str = "n_points",
                   hide_empty: str | None = None) -> pd.DataFrame:
     """Une ligne par région, colonnes déjà présentes recombinées selon les filtres
     finance actifs (catégorie d'établissement / opérateur) — aucune estimation."""
-    df = with_effective_counts(ds.get("table_analytique_regions"), f)
-    df = apply_density(df, f)
+    df = level_table(ds, f, "region")
     if hide_empty and hide_empty in df.columns:  # territoires sans aucun élément de l'indicateur
         df = df[df[hide_empty].fillna(0) > 0]
     return _lv(df, REGION_COL, value_col)
@@ -162,8 +189,7 @@ def region_hover_detail(ds: Datasets, f: Filters) -> pd.DataFrame:
     """Table région (indexée par région) portant toutes les colonnes utiles à l'info-bulle de la
     carte territoriale (population, parts, densités, distances…), recombinées selon les mêmes
     filtres finance actifs que `region_values` — pour enrichir le survol sans dupliquer de calcul."""
-    df = with_effective_counts(apply_geo(ds.get("table_analytique_regions"), f), f)
-    df = apply_density(df, f)
+    df = level_table(ds, f, "region", geo=True)
     if df.empty:
         return df
     return df.set_index(REGION_COL)
@@ -178,8 +204,8 @@ def commune_points(ds: Datasets, f: Filters, value_col: str = "n_points",
     if df.empty:
         return df
     df = with_effective_counts(df, f)
-    # Hors plage de densité : la commune n'est pas tracée du tout sur la carte.
-    df = apply_density(df, f)
+    # Effectif hors des classes choisies : la commune n'est pas tracée du tout sur la carte.
+    df = apply_effectif(df, f)
     if hide_empty and hide_empty in df.columns:
         # Commune sans aucun élément de l'indicateur choisi (ex. 0 établissement formel) : non tracée.
         df = df[df[hide_empty].fillna(0) > 0]
@@ -216,10 +242,10 @@ def etab_points(ds: Datasets, f: Filters) -> pd.DataFrame:
         communes = ds.get("table_analytique_communes")
         keys = communes.loc[communes["commune"].isin(f.commune), "cle_commune"].unique()
         df = df[df["cle_commune"].isin(keys)]
-    if f.density_active:
-        # Un établissement individuel n'a pas de densité propre : on ne garde que ceux dont la
-        # commune tombe dans la fourchette choisie (même colonne, même recombinaison que la carte).
-        communes = apply_density(with_effective_counts(ds.get("table_analytique_communes"), f), f)
+    if f.effectif_active:
+        # Un établissement individuel n'a pas d'effectif propre : on ne garde que ceux dont la
+        # commune correspond aux classes choisies (même colonne, même recombinaison que la carte).
+        communes = apply_effectif(with_effective_counts(ds.get("table_analytique_communes"), f), f)
         df = df[df["cle_commune"].isin(communes["cle_commune"])]
     return df.reset_index(drop=True)
 
@@ -392,11 +418,9 @@ _LEVEL_CONTEXT = {"region": [], "prefecture": [REGION_COL], "commune": ["prefect
 
 
 def _ratio_table(ds: Datasets, f: Filters, level: str, value_cols: list[str], sort_col: str) -> pd.DataFrame:
-    df = apply_geo(ds.get(_LEVEL_TABLE[level]), f)
-    df = with_effective_counts(df, f)
+    df = level_table(ds, f, level, geo=True)
     if level == "commune":
         df = apply_canton(df, f)
-    df = apply_density(df, f)
     if df.empty:
         return df
     label = _LEVEL_LABEL[level]
@@ -426,8 +450,7 @@ def formel_ratio_bar(ds: Datasets, f: Filters, level: str = "prefecture", n: int
 def financial_kpis(ds: Datasets, f: Filters) -> list:
     from components.kpi import Kpi
     basis = C.DENSITY_BASES[f.density_basis]
-    df = with_effective_counts(apply_geo(ds.get("table_analytique_prefectures"), f), f)
-    df = apply_density(df, f)
+    df = level_table(ds, f, "prefecture", geo=True)
     if df.empty:
         return []
     pop, n = float(df["population"].sum()), float(df[basis["count_col"]].sum())
@@ -456,8 +479,7 @@ def weakest_prefectures(ds: Datasets, f: Filters, n: int = 10) -> pd.DataFrame:
     """Préfectures les moins bien desservies selon l'indicateur choisi (colonnes : n, hab, d10k ;
     `classe` uniquement pour l'indicateur « Établissements formels »)."""
     basis = C.DENSITY_BASES[f.density_basis]
-    df = with_effective_counts(apply_geo(ds.get("table_analytique_prefectures"), f), f)
-    df = apply_density(df, f)
+    df = level_table(ds, f, "prefecture", geo=True)
     if df.empty:
         return df
     formel = f.density_basis == "formel"
@@ -481,12 +503,12 @@ def basis_ratio_table(ds: Datasets, f: Filters, level: str = "prefecture") -> pd
     return table.rename(columns={basis["count_col"]: "n", basis["hab_col"]: "hab", basis["density_col"]: "d10k"})
 
 
-def restrict_regions_by_density(ds: Datasets, f: Filters, table: pd.DataFrame) -> pd.DataFrame:
-    """Pour les tables indexées par région (répartitions) : ne garde que les régions dont la
-    densité, pour l'indicateur choisi, est dans la plage du filtre. Sans plage active : inchangé."""
-    if not f.density_active or table.empty:
+def restrict_regions_by_effectif(ds: Datasets, f: Filters, table: pd.DataFrame) -> pd.DataFrame:
+    """Pour les tables indexées par région (répartitions) : ne garde que les régions dont
+    l'effectif, pour l'indicateur choisi, appartient aux classes du filtre. Sans classe active : inchangé."""
+    if not f.effectif_active or table.empty:
         return table
-    kept = apply_density(with_effective_counts(ds.get("table_analytique_regions"), f), f)[REGION_COL]
+    kept = level_table(ds, f, "region")[REGION_COL]
     return table[table.index.isin(kept)]
 
 
