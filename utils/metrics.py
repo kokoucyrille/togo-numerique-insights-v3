@@ -147,11 +147,14 @@ def accessibility_details(ds: Datasets, f: Filters) -> pd.DataFrame:
 # --------------------------------------------------------------------------- #
 # Carte territoriale interactive (components/territorial_map.py)
 # --------------------------------------------------------------------------- #
-def region_values(ds: Datasets, f: Filters, value_col: str = "n_points") -> pd.DataFrame:
+def region_values(ds: Datasets, f: Filters, value_col: str = "n_points",
+                  hide_empty: str | None = None) -> pd.DataFrame:
     """Une ligne par région, colonnes déjà présentes recombinées selon les filtres
     finance actifs (catégorie d'établissement / opérateur) — aucune estimation."""
     df = with_effective_counts(ds.get("table_analytique_regions"), f)
     df = apply_density(df, f)
+    if hide_empty and hide_empty in df.columns:  # territoires sans aucun élément de l'indicateur
+        df = df[df[hide_empty].fillna(0) > 0]
     return _lv(df, REGION_COL, value_col)
 
 
@@ -166,7 +169,8 @@ def region_hover_detail(ds: Datasets, f: Filters) -> pd.DataFrame:
     return df.set_index(REGION_COL)
 
 
-def commune_points(ds: Datasets, f: Filters, value_col: str = "n_points") -> pd.DataFrame:
+def commune_points(ds: Datasets, f: Filters, value_col: str = "n_points",
+                   hide_empty: str | None = None) -> pd.DataFrame:
     """Une ligne par commune avec ses coordonnées réelles (lon_c/lat_c), pour les
     bulles de la carte territoriale. `dans_perimetre` indique si la commune
     correspond aux filtres territoriaux actifs (région/préfecture/commune/canton)."""
@@ -176,6 +180,9 @@ def commune_points(ds: Datasets, f: Filters, value_col: str = "n_points") -> pd.
     df = with_effective_counts(df, f)
     # Hors plage de densité : la commune n'est pas tracée du tout sur la carte.
     df = apply_density(df, f)
+    if hide_empty and hide_empty in df.columns:
+        # Commune sans aucun élément de l'indicateur choisi (ex. 0 établissement formel) : non tracée.
+        df = df[df[hide_empty].fillna(0) > 0]
     scoped = apply_geo(df, f)
     if f.canton:
         cantons = ds.get("table_analytique_cantons_presence")
@@ -209,7 +216,7 @@ def etab_points(ds: Datasets, f: Filters) -> pd.DataFrame:
         communes = ds.get("table_analytique_communes")
         keys = communes.loc[communes["commune"].isin(f.commune), "cle_commune"].unique()
         df = df[df["cle_commune"].isin(keys)]
-    if f.density_range is not None:
+    if f.density_active:
         # Un établissement individuel n'a pas de densité propre : on ne garde que ceux dont la
         # commune tombe dans la fourchette choisie (même colonne, même recombinaison que la carte).
         communes = apply_density(with_effective_counts(ds.get("table_analytique_communes"), f), f)
@@ -477,7 +484,7 @@ def basis_ratio_table(ds: Datasets, f: Filters, level: str = "prefecture") -> pd
 def restrict_regions_by_density(ds: Datasets, f: Filters, table: pd.DataFrame) -> pd.DataFrame:
     """Pour les tables indexées par région (répartitions) : ne garde que les régions dont la
     densité, pour l'indicateur choisi, est dans la plage du filtre. Sans plage active : inchangé."""
-    if f.density_range is None or table.empty:
+    if not f.density_active or table.empty:
         return table
     kept = apply_density(with_effective_counts(ds.get("table_analytique_regions"), f), f)[REGION_COL]
     return table[table.index.isin(kept)]

@@ -154,8 +154,8 @@ def _commune_color(row: pd.Series, color_by: str | None, vmax: float, base_color
 def build_figure(ds, f: Filters, *, value_col: str = "n_points", unit: str = "", value_format=_DEFAULT_FORMAT,
                  color_by: str | None = None, height: int = 480, show_etab: bool = False,
                  hover_fields: tuple[str, ...] = (), density_col: str | None = None,
-                 density_title: str = "") -> tuple[go.Figure, str, str]:
-    regions_df = m.region_values(ds, f, value_col)
+                 density_title: str = "", hide_empty: str | None = None) -> tuple[go.Figure, str, str]:
+    regions_df = m.region_values(ds, f, value_col, hide_empty)
     values = dict(zip(regions_df["label"], regions_df["valeur"])) if not regions_df.empty else {}
     dens_vals: dict = {}
     d_lo, d_hi = 0.0, 1.0
@@ -165,7 +165,7 @@ def build_figure(ds, f: Filters, *, value_col: str = "n_points", unit: str = "",
         rd = m.region_values(ds, f, density_col)
         dens_vals = dict(zip(rd["label"], rd["valeur"])) if not rd.empty else {}
     region_detail = m.region_hover_detail(ds, f) if hover_fields else pd.DataFrame()
-    communes = m.commune_points(ds, f, value_col)
+    communes = m.commune_points(ds, f, value_col, hide_empty)
     if density_col and density_col in communes.columns and communes[density_col].notna().any():
         d_lo = float(communes[density_col].quantile(0.05))
         d_hi = float(communes[density_col].quantile(0.95))
@@ -185,8 +185,8 @@ def build_figure(ds, f: Filters, *, value_col: str = "n_points", unit: str = "",
         data_name = C.REGION_GEO_ALIAS.get(props["region"], props["region"])
         poly_names.add(data_name)
         has = data_name in values
-        if f.density_range is not None and not has:
-            continue  # région hors plage de densité : n'apparaît pas sur la carte
+        if (f.density_active or hide_empty) and not has:
+            continue  # région hors niveaux de densité, ou sans aucun élément : non tracée
         selected = data_name in f.region
         color = region_color(data_name, i) if (has or selected or not values) else C.COLORS["empty"]
         if f.region and not selected:
@@ -375,13 +375,13 @@ def render(ds, f: Filters, *, key: str, value_col: str = "n_points", unit: str =
           value_format=_DEFAULT_FORMAT, color_by: str | None = None, height: int = 480,
           show_etab: bool = False, caption: str | None = None,
           hover_fields: tuple[str, ...] = (), density_col: str | None = None,
-          density_title: str = "") -> None:
+          density_title: str = "", hide_empty: str | None = None) -> None:
     """Carte interactive : clic direct sur une région ou une commune, zoom automatique
     sur le territoire réellement sélectionné (filtres ou clic), synchronisée partout."""
     fig, level, _ = build_figure(ds, f, value_col=value_col, unit=unit, value_format=value_format,
                                  color_by=color_by, height=height, show_etab=show_etab,
                                  hover_fields=hover_fields, density_col=density_col,
-                                 density_title=density_title)
+                                 density_title=density_title, hide_empty=hide_empty)
 
     top = st.columns([5, 1.2])
     with top[0]:

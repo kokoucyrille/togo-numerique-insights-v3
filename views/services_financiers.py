@@ -12,6 +12,7 @@ from utils import config as C
 from utils import metrics as M
 from utils.data_loader import Datasets
 from utils.filters import Filters
+from utils.filters import density_chip as density_chip_labels
 from utils.formatting import fmt_dec, fmt_int
 
 _CLASSE_COLORS = {"Correct": C.COLORS["green"], "Faible": C.OPERATEUR_COLORS["Moov"], "MM-only": C.COLORS["red"]}
@@ -21,10 +22,7 @@ def render(ds: Datasets, f: Filters) -> None:
     page_header("Accès aux services financiers", "Couverture territoriale des banques, IMF, assurances et mutuelles.")
     basis = C.DENSITY_BASES[f.density_basis]
     formel = f.density_basis == "formel"
-    density_chip = []
-    if f.density_range:
-        lo, hi = f.density_range
-        density_chip = [f"{basis['slider_label']} {fmt_dec(lo, 2)}–{fmt_dec(hi, 2)} / 10 000 hab."]
+    density_chip = density_chip_labels(f)
     context_bar([
         ("Région", list(f.region)), ("Préfecture", list(f.prefecture)), ("Commune", list(f.commune)),
         ("Type d'établissement", list(f.etab_categorie)), ("Indicateur", [basis["label"]]),
@@ -41,16 +39,16 @@ def render(ds: Datasets, f: Filters) -> None:
             note_bits = []
             if f.etab_categorie:
                 note_bits.append("Type : " + ", ".join(f.etab_categorie))
-            if f.density_range:
-                lo, hi = f.density_range
-                note_bits.append(f"Densité {fmt_dec(lo, 2)}–{fmt_dec(hi, 2)}")
+            if f.density_active:
+                note_bits.append("Densité : niveau" + ("x " if len(f.density_levels) > 1 else " ")
+                                 + ", ".join(map(str, f.density_levels)))
             note = " · ".join(note_bits) if note_bits else \
                 ("Banques, IMF, assurances, mutuelles" if formel else basis["label"]) + " — cliquez une région ou une commune"
             card_title("account_balance", f"Carte territoriale — {basis['map_title']}", note)
             tmap.render(ds, f, key=f"sf_map_{f.density_basis}", value_col=basis["count_col"],
                         unit=basis["unit"], height=420, show_etab=basis["show_etab"],
                         hover_fields=basis["hover"], density_col=basis["density_col"],
-                        density_title=basis["kpi_dens"])
+                        density_title=basis["kpi_dens"], hide_empty=basis["count_col"])
 
     with visual_col:
         with st.container(key="card_sf_cat"):

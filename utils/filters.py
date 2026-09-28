@@ -26,9 +26,9 @@ F_REGION, F_PREFECTURE, F_COMMUNE, F_CANTON = "f_region", "f_prefecture", "f_com
 F_ETAB, F_MM, F_PALIER, F_AXE, F_YEARS = "f_etab_categorie", "f_mm_operateur", "f_palier", "f_axe", "f_years"
 F_GSM = "f_gsm_operateur"
 # Filtre « densité » (page Services financiers) : base de calcul + plage du curseur.
-F_DENS_BASIS, F_DENS_RANGE = "f_density_basis", "f_density_range"
+F_DENS_BASIS, F_DENS_LEVELS = "f_density_basis", "f_density_levels"
 _ALL_KEYS = (F_REGION, F_PREFECTURE, F_COMMUNE, F_CANTON, F_ETAB, F_MM, F_PALIER, F_AXE, F_YEARS, F_GSM,
-             F_DENS_BASIS, F_DENS_RANGE)
+             F_DENS_BASIS, F_DENS_LEVELS)
 
 # Compteur incrémenté à chaque réinitialisation géographique (barre latérale ou bouton
 # « Vue nationale » de la carte). La carte territoriale (components/territorial_map.py)
@@ -53,14 +53,14 @@ class Filters:
     year_start: int = C.USAGE_YEAR_MIN
     year_end: int = C.USAGE_YEAR_MAX
     gsm_operateur: tuple[str, ...] = ()
-    # Densité (pour 10 000 hab.) : base de calcul (cf. C.DENSITY_BASES) et plage retenue.
-    # `density_range` vaut None tant que le curseur couvre toute l'étendue (aucun filtrage).
+    # Densité (pour 10 000 hab.) : base de calcul (cf. C.DENSITY_BASES) et niveaux retenus (1 à 5,
+    # cf. density_levels()). Aucun niveau sélectionné = aucun filtrage.
     density_basis: str = C.DEFAULT_DENSITY_BASIS
-    density_range: tuple[float, float] | None = None
+    density_levels: tuple[int, ...] = ()
 
     @property
     def density_active(self) -> bool:
-        return self.density_range is not None
+        return bool(self.density_levels)
 
     @property
     def compare_regions(self) -> bool:
@@ -113,37 +113,47 @@ def apply_etab_categorie(df: pd.DataFrame, f: Filters, col: str = "activite_cate
     return df[df[col].isin(f.etab_categorie)]
 
 
-def density_bounds(ds: Datasets, basis: str) -> tuple[float, float]:
-    """Étendue réelle (min, max) de la densité choisie, observée au niveau commune (le plus fin
-    disponible) — bornes du curseur ; jamais estimées ni arrondies à une échelle arbitraire."""
-    col = C.DENSITY_BASES[basis]["density_col"]
-    df = ds.get("table_analytique_communes")
-    if df.empty or col not in df.columns:
-        return 0.0, 1.0
-    s = df[col].dropna()
-    if s.empty:
-        return 0.0, 1.0
-    lo, hi = float(s.min()), float(s.max())
-    if hi <= lo:
-        hi = lo + 1.0
-    return lo, hi
+def _num(x: float) -> str:
+    return f"{x:g}".replace(".", ",")
+
+
+def density_levels(basis: str) -> list[tuple[int, float, float, str]]:
+    """Les 5 niveaux de densité d'un indicateur : (numéro, borne_inf incluse, borne_sup exclue,
+    libellé de la fourchette). Niveau 1 = densité la plus faible, niveau 5 = la plus élevée."""
+    edges = C.DENSITY_BASES[basis]["edges"]
+    bounds = [float("-inf"), *edges, float("inf")]
+    out = []
+    for i in range(len(bounds) - 1):
+        lo, hi = bounds[i], bounds[i + 1]
+        label = (f"< {_num(hi)}" if lo == float("-inf") else
+                 f"≥ {_num(lo)}" if hi == float("inf") else f"{_num(lo)} – {_num(hi)}")
+        out.append((i + 1, lo, hi, label))
+    return out
+
+
+def density_chip(f: "Filters") -> list[str]:
+    """Libellés des niveaux de densité actifs (barre de contexte des pages)."""
+    return [f"Niveau {n} · {label}" for n, _, _, label in density_levels(f.density_basis) if n in f.density_levels]
 
 
 def apply_density(df: pd.DataFrame, f: Filters) -> pd.DataFrame:
-    """Restreint aux territoires dont la densité (pour 10 000 hab.) est dans la plage choisie.
+    """Restreint aux territoires dont la densité (pour 10 000 hab.) appartient à l'un des niveaux choisis.
 
     À appeler APRÈS with_effective_counts() : la colonne de densité (formel_10k / mm_10k / pts_10k)
     reflète alors déjà le filtre « type d'établissement » (et « opérateur Mobile Money » ailleurs).
     Chaque échelon (région, préfecture, commune) est jugé sur sa propre densité ; une valeur
-    absente (NaN) est exclue dès que le filtre est actif. Sans plage active, `df` est renvoyé tel quel.
+    absente (NaN) est exclue dès que le filtre est actif. Sans niveau actif, `df` est renvoyé tel quel.
     """
-    if f.density_range is None or df.empty:
+    if not f.density_active or df.empty:
         return df
     col = C.DENSITY_BASES[f.density_basis]["density_col"]
     if col not in df.columns:
         return df
-    lo, hi = f.density_range
-    return df[df[col].between(lo, hi)]
+    mask = pd.Series(False, index=df.index)
+    for n, lo, hi, _ in density_levels(f.density_basis):
+        if n in f.density_levels:
+            mask |= (df[col] >= lo) & (df[col] < hi)
+    return df[mask]
 
 
 def apply_palier(df: pd.DataFrame, f: Filters, col: str = "palier") -> pd.DataFrame:
@@ -288,7 +298,7 @@ def render_sidebar(ds: Datasets, page: str) -> Filters:
                                     "etab_categorie": (), "mm_operateur": (), "palier": (), "axe": (),
                                     "gsm_operateur": ()}
         year_start, year_end = C.USAGE_YEAR_MIN, C.USAGE_YEAR_MAX
-        density_basis, density_range = C.DEFAULT_DENSITY_BASIS, None
+        density_basis, density_picked = C.DEFAULT_DENSITY_BASIS, ()
 
         geo_pages = {"vue_ensemble", "services_financiers", "mobile_money", "inclusion_territoriale"}
         finance_pages = {"vue_ensemble", "services_financiers", "mobile_money"}
@@ -338,11 +348,11 @@ def render_sidebar(ds: Datasets, page: str) -> Filters:
                                                 C.ALL_LABELS["mm_operateur"], icon="sim_card",
                                                 disabled=not operateurs)
 
-        # Filtre « Densité » : restreint aux territoires dont la densité (pour 10 000 hab.) se
-        # trouve dans la fourchette choisie. Uniquement sur Services financiers, où établissements
+        # Filtre « Densité » : restreint aux territoires dont la densité (pour 10 000 hab.) relève
+        # des niveaux choisis (1 à 5). Uniquement sur Services financiers, où établissements
         # formels et agents Mobile Money (et leur somme) sont tous deux pertinents pour cette page.
         # Colonnes déjà présentes (formel_10k / mm_10k / pts_10k) — aucun calcul nouveau ; les
-        # bornes du curseur sont l'étendue réelle observée au niveau commune (le plus fin).
+        # seuils des niveaux sont définis dans config.DENSITY_BASES (« edges »).
         if page == "services_financiers":
             st.markdown('<div class="sb-section">Densité</div>', unsafe_allow_html=True)
             dens_nonce = st.session_state.get(F_GEO_NONCE, 0)
@@ -355,21 +365,19 @@ def render_sidebar(ds: Datasets, page: str) -> Filters:
                 format_func=lambda k: C.DENSITY_BASES[k]["label"])
             st.session_state[F_DENS_BASIS] = density_basis
 
-            lo, hi = density_bounds(ds, density_basis)
+            # Niveaux 1 à 5 (multi-sélection) : la clé du widget porte le compteur de réinitialisation
+            # et l'indicateur, donc « Réinitialiser » ou un changement d'indicateur repartent à vide.
+            levels = density_levels(density_basis)
             basis_meta = C.DENSITY_BASES[density_basis]
-            range_widget_key = f"{F_DENS_RANGE}__{dens_nonce}__{density_basis}"
-            default_range = st.session_state.get(range_widget_key, (lo, hi))
-            default_range = (max(lo, min(default_range[0], hi)), max(lo, min(default_range[1], hi)))
-            sel_lo, sel_hi = st.slider(
-                f"{basis_meta['slider_label']} pour 10 000 hab.", min_value=lo, max_value=hi,
-                value=default_range, step=basis_meta["step"], key=range_widget_key,
-                help="Restreint la carte, les KPI et les classements aux territoires (commune, "
-                     "préfecture, région) dont la densité tombe dans cette fourchette — calculée "
-                     "sur l'étendue réelle observée au niveau commune.")
-            st.session_state[F_DENS_RANGE] = (sel_lo, sel_hi)
-            density_range = None if (sel_lo <= lo and sel_hi >= hi) else (sel_lo, sel_hi)
-            if density_range:
-                st.caption(f"{fmt_dec(sel_lo, 2)} – {fmt_dec(sel_hi, 2)} {basis_meta['short']} / 10 000 hab.")
+            labels = {n: f"{n} · {label}" for n, _, _, label in levels}
+            picked = st.pills(
+                f":material/grid_view: {basis_meta['kpi_dens']}", list(labels), selection_mode="multi",
+                format_func=labels.get, key=f"{F_DENS_LEVELS}__{dens_nonce}__{density_basis}",
+                help="Niveau 1 = densité la plus faible, niveau 5 = la plus élevée (pour 10 000 hab.). "
+                     "Sélectionnez un ou plusieurs niveaux : la carte, les KPI et les classements ne "
+                     "gardent que les territoires (commune, préfecture, région) de ces niveaux.")
+            density_picked = tuple(sorted(picked or ()))
+            st.session_state[F_DENS_LEVELS] = density_picked
 
         # Le filtre « Palier de priorité » n'existe plus que sur la page Recommandations :
         # la page Inclusion territoriale présente déjà tous les paliers (carte, légende).
@@ -415,7 +423,7 @@ def render_sidebar(ds: Datasets, page: str) -> Filters:
                    canton=chosen["canton"], etab_categorie=chosen["etab_categorie"],
                    mm_operateur=chosen["mm_operateur"], palier=chosen["palier"], axe=chosen["axe"],
                    year_start=year_start, year_end=year_end, gsm_operateur=chosen["gsm_operateur"],
-                   density_basis=density_basis, density_range=density_range)
+                   density_basis=density_basis, density_levels=density_picked)
 
 
 def _sidebar_decoration() -> str:
