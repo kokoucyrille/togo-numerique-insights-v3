@@ -365,14 +365,15 @@ def render_sidebar(ds: Datasets, page: str) -> Filters:
                 format_func=lambda k: C.DENSITY_BASES[k]["label"])
             st.session_state[F_DENS_BASIS] = density_basis
 
-            # Niveaux 1 à 5 (multi-sélection) : la clé du widget porte le compteur de réinitialisation
+            # Niveaux 1 à 5 (liste déroulante à choix multiples) : la clé du widget porte le compteur de réinitialisation
             # et l'indicateur, donc « Réinitialiser » ou un changement d'indicateur repartent à vide.
             levels = density_levels(density_basis)
             basis_meta = C.DENSITY_BASES[density_basis]
             labels = {n: f"{n} · {label}" for n, _, _, label in levels}
-            picked = st.pills(
-                f":material/grid_view: {basis_meta['kpi_dens']}", list(labels), selection_mode="multi",
+            picked = st.multiselect(
+                f":material/grid_view: {basis_meta['kpi_dens']}", list(labels),
                 format_func=labels.get, key=f"{F_DENS_LEVELS}__{dens_nonce}__{density_basis}",
+                placeholder="Tous les niveaux",
                 help="Niveau 1 = densité la plus faible, niveau 5 = la plus élevée (pour 10 000 hab.). "
                      "Sélectionnez un ou plusieurs niveaux : la carte, les KPI et les classements ne "
                      "gardent que les territoires (commune, préfecture, région) de ces niveaux.")
